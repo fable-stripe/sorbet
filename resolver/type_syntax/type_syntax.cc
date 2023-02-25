@@ -922,6 +922,22 @@ optional<core::TypePtr> getResultTypeWithSelfTypeParams(core::Context ctx, const
     }
 }
 
+void unknownTypeSyntax(core::Context ctx, const ast::Send &s) {
+    if (auto e = ctx.beginError(s.loc, core::errors::Resolver::InvalidTypeDeclaration)) {
+        auto klass = sendLooksLikeBadTypeApplication(ctx, s);
+        if (klass.exists()) {
+            auto scope =
+                s.recv.isSelfReference() ? "" : fmt::format("{}::", ctx.locAt(s.recv.loc()).source(ctx).value());
+            auto replacement =
+                fmt::format("{}{}[{}]", scope, s.fun.show(ctx), ctx.locAt(s.argsLoc()).source(ctx).value());
+            e.setHeader("Did you mean to use square brackets: `{}`", replacement);
+            e.replaceWith("Use square brackets for type args", ctx.locAt(s.loc), "{}", replacement);
+        } else {
+            e.setHeader("Malformed type declaration. Unknown type syntax. Expected a ClassName or T.<func>");
+        }
+    }
+}
+
 optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core::Context ctx,
                                                                             const ast::ExpressionPtr &expr,
                                                                             const ParsedSig &sigBeingParsed,
@@ -1155,34 +1171,42 @@ optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core
         }
 
         auto *recvi = ast::cast_tree<ast::ConstantLit>(s.recv);
+        core::SymbolRef recviSymbol;
         if (recvi == nullptr) {
-            if (auto e = ctx.beginError(s.loc, core::errors::Resolver::InvalidTypeDeclaration)) {
-                auto klass = sendLooksLikeBadTypeApplication(ctx, s);
-                if (klass.exists()) {
-                    auto scope = s.recv.isSelfReference()
-                                     ? ""
-                                     : fmt::format("{}::", ctx.locAt(s.recv.loc()).source(ctx).value());
-                    auto replacement =
-                        fmt::format("{}{}[{}]", scope, s.fun.show(ctx), ctx.locAt(s.argsLoc()).source(ctx).value());
-                    e.setHeader("Did you mean to use square brackets: `{}`", replacement);
-                    e.replaceWith("Use square brackets for type args", ctx.locAt(s.loc), "{}", replacement);
-                } else {
-                    e.setHeader("Malformed type declaration. Unknown type syntax. Expected a ClassName or T.<func>");
+            if (auto *recvSend = ast::cast_tree<ast::Send>(s.recv)) {
+                if (s.fun == core::Names::squareBrackets() && recvSend->fun == core::Names::classOf()) {
+                    // TODO(jez) This doesn't check that recv == Symbols::T()
+                    // TODO(jez) This is a quick hack, that assumes we will be perpetually fine
+                    // calling `externalType` to handle the `T.class_of`. If we decide we want to
+                    // report an error there saying you must provide type arguments, we'll have to
+                    // factor out a function to handle the `T.class_of` logic that we can call here
+                    // and in interpretTCombinator.
+                    auto recvType = interpretTCombinator(ctx, *recvSend, sigBeingParsed, args);
+                    if (!recvType.has_value()) {
+                        unknownTypeSyntax(ctx, s);
+                        result.type = core::Types::untypedUntracked();
+                        return result;
+                    }
+                    auto &appliedType = core::cast_type_nonnull<core::AppliedType>(recvType->type);
+                    recviSymbol = appliedType.klass;
                 }
+            } else {
+                unknownTypeSyntax(ctx, s);
+                result.type = core::Types::untypedUntracked();
+                return result;
             }
-            result.type = core::Types::untypedUntracked();
-            return result;
-        }
-        if (recvi->symbol == core::Symbols::T()) {
+        } else if (recvi->symbol == core::Symbols::T()) {
             if (auto res = interpretTCombinator(ctx, s, sigBeingParsed, args)) {
                 return move(res.value());
             } else {
                 return nullopt;
             }
+        } else {
+            recviSymbol = recvi->symbol;
         }
 
-        if (recvi->symbol == core::Symbols::Magic() && s.fun == core::Names::callWithSplat()) {
-            if (auto e = ctx.beginError(recvi->loc, core::errors::Resolver::InvalidTypeDeclaration)) {
+        if (recviSymbol == core::Symbols::Magic() && s.fun == core::Names::callWithSplat()) {
+            if (auto e = ctx.beginError(s.recv.loc(), core::errors::Resolver::InvalidTypeDeclaration)) {
                 e.setHeader("Malformed type declaration: splats cannot be used in types");
             }
             result.type = core::Types::untypedUntracked();
@@ -1190,20 +1214,7 @@ optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core
         }
 
         if (s.fun != core::Names::squareBrackets()) {
-            if (auto e = ctx.beginError(s.loc, core::errors::Resolver::InvalidTypeDeclaration)) {
-                auto klass = sendLooksLikeBadTypeApplication(ctx, s);
-                if (klass.exists()) {
-                    auto scope = s.recv.isSelfReference()
-                                     ? ""
-                                     : fmt::format("{}::", ctx.locAt(s.recv.loc()).source(ctx).value());
-                    auto replacement =
-                        fmt::format("{}{}[{}]", scope, s.fun.show(ctx), ctx.locAt(s.argsLoc()).source(ctx).value());
-                    e.setHeader("Did you mean to use square brackets: `{}`", replacement);
-                    e.replaceWith("Use square brackets for type args", ctx.locAt(s.loc), "{}", replacement);
-                } else {
-                    e.setHeader("Malformed type declaration. Unknown type syntax. Expected a ClassName or T.<func>");
-                }
-            }
+            unknownTypeSyntax(ctx, s);
             result.type = core::Types::untypedUntracked();
             return result;
         }
@@ -1252,22 +1263,22 @@ optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core
         }
 
         core::SymbolRef corrected;
-        if (recvi->symbol.isClassOrModule()) {
-            corrected = recvi->symbol.asClassOrModuleRef().forwarderForBuiltinGeneric();
+        if (recviSymbol.isClassOrModule()) {
+            corrected = recviSymbol.asClassOrModuleRef().forwarderForBuiltinGeneric();
         }
         if (corrected.exists()) {
             if (auto e = ctx.beginError(s.loc, core::errors::Resolver::BadStdlibGeneric)) {
                 e.setHeader("Use `{}`, not `{}` to declare a typed `{}`", corrected.show(ctx) + "[...]",
-                            recvi->symbol.show(ctx) + "[...]", recvi->symbol.show(ctx));
+                            recviSymbol.show(ctx) + "[...]", recviSymbol.show(ctx));
                 e.addErrorNote("`{}` will raise at runtime because this generic was defined in the standard library",
-                               recvi->symbol.show(ctx) + "[...]");
-                e.replaceWith(fmt::format("Change `{}` to `{}`", recvi->symbol.show(ctx), corrected.show(ctx)),
-                              ctx.locAt(recvi->loc), "{}", corrected.show(ctx));
+                               recviSymbol.show(ctx) + "[...]");
+                e.replaceWith(fmt::format("Change `{}` to `{}`", recviSymbol.show(ctx), corrected.show(ctx)),
+                              ctx.locAt(s.recv.loc()), "{}", corrected.show(ctx));
             }
             result.type = core::Types::untypedUntracked();
             return result;
         } else {
-            corrected = recvi->symbol;
+            corrected = recviSymbol;
         }
         corrected = corrected.dealias(ctx);
 
@@ -1281,7 +1292,7 @@ optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core
 
         auto genericClass = corrected.asClassOrModuleRef();
         ENFORCE_NO_TIMER(genericClass.exists());
-        core::CallLocs locs{ctx.file, s.loc, recvi->loc, s.funLoc, argLocs};
+        core::CallLocs locs{ctx.file, s.loc, s.recv.loc(), s.funLoc, argLocs};
         auto out = core::Types::applyTypeArguments(ctx, locs, s.numPosArgs(), targs, genericClass);
 
         if (out.isUntyped()) {
