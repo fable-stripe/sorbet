@@ -139,6 +139,7 @@ TypePtr ClassOrModule::unsafeComputeExternalType(GlobalState &gs) {
 
         // Special-case covariant stdlib generics to have their types
         // defaulted to `T.untyped`. This set *should not* grow over time.
+        // TODO(jez) Should this use isLegacyStdlibGeneric ?
         bool isStdlibGeneric = ref == core::Symbols::Hash() || ref == core::Symbols::Array() ||
                                ref == core::Symbols::Set() || ref == core::Symbols::Range() ||
                                ref == core::Symbols::Enumerable() || ref == core::Symbols::Enumerator() ||
