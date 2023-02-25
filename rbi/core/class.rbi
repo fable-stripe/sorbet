@@ -69,6 +69,8 @@
 # obj--->OtherClass---------->(OtherClass)-----------...
 # ```
 class Class < Module
+  extend T::Generic
+  initializable!(:out)
   # Allocates space for a new object of *class*'s class and does not call
   # initialize on the new instance. The returned object must be an instance of
   # *class*.
@@ -114,10 +116,12 @@ class Class < Module
   # to create a new object of *class*'s class, then invokes that object's
   # initialize method, passing it *args*. This is the method that ends up
   # getting called whenever an object is constructed using `.new`.
-  sig {params(args: T.untyped, blk: T.untyped).returns(T.untyped)}
+  # TODO(jez) Are there any other Class instance methods we want to annotate?
+  # TODO(jez) Are there any other non-Class instance methods we want to queue up to fix in a future change?
+  sig {params(args: T.untyped, blk: T.untyped).returns(T.attached_class)}
   def new(*args, &blk); end
 
-  sig { params(blk: T.untyped).returns(Class) }
+  sig { params(blk: T.untyped).returns(T::Class[Object]) }
   sig do
     type_parameters(:Parent)
       .params(super_class: T.all(Class, T.type_parameter(:Parent)), blk: T.untyped)

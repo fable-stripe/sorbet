@@ -244,6 +244,14 @@ module T::Generic
   #
   # For more information, see https://sorbet.org/docs/generics#generics-and-runtime-checks
   def [](*types); end
+
+  # Allows using `T.attached_class` in this module, at the expense of only
+  # being allowed to `extend` this module, never `include` it (unless the
+  # module it's included into is also marked `initializable!`).
+  #
+  # For more information, see https://sorbet.org/docs/attached-class
+  sig {params(variance: Symbol, blk: T.untyped).void}
+  def initializable!(variance=:invariant, &blk); end
 end
 
 module T::Helpers
@@ -321,6 +329,10 @@ module T::Set
 end
 module T::Range
   # Type syntax to specify the element type of a standard library Range
+  def self.[](type); end
+end
+module T::Class
+  # Type syntax to specify the element type of a standard library Class
   def self.[](type); end
 end
 module T::Enumerable

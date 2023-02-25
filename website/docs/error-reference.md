@@ -531,6 +531,16 @@ generated setter method will then be given an invalid name ending with `==`.
 `T.nilable(T.untyped)` is just `T.untyped`, because `nil` is a valid value of
 type `T.untyped` (along with all other values).
 
+## 3513
+
+The `initializable!` annotation is only allowed in a Ruby `module`, not a Ruby
+`class`. For more, see the docs for [`T.attached_class`](attached-class.md).
+
+## 3514
+
+The `initializable!` annotation cannot be given a contravariant `:in` annotation
+because `T.attached_class` is only allowed in output positions.
+
 ## 3702
 
 > This error is specific to Stripe's custom `--stripe-packages` mode. If you are
@@ -2821,6 +2831,14 @@ class MyClass < AbstractSerializable
   # ...
 end
 ```
+
+## 5073
+
+A module marked `initializable!` can only be mixed into a class with `extend`,
+or a module with `include`. When mixing an `initializable!` module into another
+module, both modules must be marked `initializable!`.
+
+For more information, see the docs for [`T.attached_class`](attached-class.md).
 
 ## 6001
 

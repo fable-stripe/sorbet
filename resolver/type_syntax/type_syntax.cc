@@ -875,21 +875,40 @@ optional<TypeSyntax::ResultType> interpretTCombinator(core::Context ctx, const a
             auto owner = ctx.owner.asClassOrModuleRef();
             auto ownerData = owner.data(ctx);
 
-            // Can only use `T.attached_class` on singleton methods in a class (not a module)
-            auto attachedClassIsAllowed =
-                ownerData->isSingletonClass(ctx) && ownerData->attachedClass(ctx).data(ctx)->isClass();
-            if (!attachedClassIsAllowed) {
+            auto maybeAttachedClass = ownerData->findMember(ctx, core::Names::Constants::AttachedClass());
+            if (!maybeAttachedClass.exists()) {
                 if (auto e = ctx.beginError(send.loc, core::errors::Resolver::InvalidTypeDeclaration)) {
-                    e.setHeader("`{}` may only be used in a singleton class method context, and not in modules",
-                                "T.attached_class");
-                    e.addErrorNote("Current context is `{}`, which is an instance class not a singleton class",
-                                   owner.show(ctx));
+                    auto initializable = core::Names::declareInitializable().show(ctx);
+                    if (ownerData->isModule()) {
+                        e.setHeader("`{}` must be marked `{}` before module instance methods can use `{}`",
+                                    owner.show(ctx), initializable, "T.attached_class");
+                        // TODO(jez) Autocorrect to insert `initializable!`
+                    } else if (ownerData->isSingletonClass(ctx)) {
+                        // Combination of `isSingletonClass` and `<AttachedClass>` missing means
+                        // this is the singleton class of a module.
+                        ENFORCE(ownerData->attachedClass(ctx).data(ctx)->isModule());
+                        e.setHeader("`{}` cannot be used in singleton methods on modules, because modules cannot be "
+                                    "instantiated",
+                                    "T.attached_class");
+                    } else {
+                        e.setHeader(
+                            "`{}` may only be used in singleton methods on classes or instance methods on `{}` modules",
+                            "T.attached_class", initializable);
+                        e.addErrorNote("Current context is `{}`, which is an instance class not a singleton class",
+                                       owner.show(ctx));
+                    }
                 }
                 return TypeSyntax::ResultType{core::Types::untypedUntracked(), core::Symbols::noClassOrModule()};
             } else {
-                // All singletons have an AttachedClass type member, created by `singletonClass`
-                const auto attachedClass =
-                    owner.data(ctx)->findMember(ctx, core::Names::Constants::AttachedClass()).asTypeMemberRef();
+                ENFORCE(
+                    // T::Class[...] support
+                    owner == core::Symbols::Class() ||
+                    // isModule is never true for a singleton class, which implies this is a module instance method
+                    ownerData->isModule() ||
+                    // In classes, can only use `T.attached_class` on singleton methods
+                    (ownerData->isSingletonClass(ctx) && ownerData->attachedClass(ctx).data(ctx)->isClass()));
+
+                const auto attachedClass = maybeAttachedClass.asTypeMemberRef();
                 return TypeSyntax::ResultType{core::make_type<core::SelfTypeParam>(attachedClass),
                                               core::Symbols::noClassOrModule()};
             }
@@ -1014,7 +1033,11 @@ optional<TypeSyntax::ResultType> getResultTypeAndBindWithSelfTypeParamsImpl(core
             auto klass = sym.asClassOrModuleRef();
             // the T::Type generics internally have a typeArity of 0, so this allows us to check against them in the
             // same way that we check against types like `Array`
-            if (klass.isBuiltinGenericForwarder() || klass.data(ctx)->typeArity(ctx) > 0) {
+            //
+            // TODO(jez) This `klass == Class` is just a hack to get the payload to build while prototyping...
+            // we should probably fix it properly in the stdlib, and figure out what our rollout strategy is.
+            if (klass != core::Symbols::Class() &&
+                (klass.isBuiltinGenericForwarder() || klass.data(ctx)->typeArity(ctx) > 0)) {
                 auto level = klass.isLegacyStdlibGeneric() ? core::errors::Resolver::GenericClassWithoutTypeArgsStdlib
                                                            : core::errors::Resolver::GenericClassWithoutTypeArgs;
                 if (auto e = ctx.beginError(i.loc, level)) {

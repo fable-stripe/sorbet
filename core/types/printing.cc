@@ -450,6 +450,8 @@ string AppliedType::show(const GlobalState &gs, ShowOptions options) const {
         fmt::format_to(std::back_inserter(buf), "T::Range");
     } else if (this->klass == Symbols::Set()) {
         fmt::format_to(std::back_inserter(buf), "T::Set");
+    } else if (this->klass == Symbols::Class()) {
+        fmt::format_to(std::back_inserter(buf), "T::Class");
     } else {
         if (std::optional<int> procArity = Types::getProcArity(*this)) {
             fmt::format_to(std::back_inserter(buf), "T.proc");
@@ -500,7 +502,8 @@ string AppliedType::show(const GlobalState &gs, ShowOptions options) const {
         auto tm = typeMember;
         if (tm.data(gs)->flags.isFixed) {
             it = targs.erase(it);
-        } else if (typeMember.data(gs)->name == core::Names::Constants::AttachedClass()) {
+        } else if (this->klass.data(gs)->isSingletonClass(gs) &&
+                   typeMember.data(gs)->name == core::Names::Constants::AttachedClass()) {
             it = targs.erase(it);
         } else if (this->klass == Symbols::Hash() && typeMember == typeMembers.back()) {
             it = targs.erase(it);

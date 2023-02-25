@@ -19,4 +19,6 @@ module T::Generic
   def type_template(variance=:invariant, &blk)
     T::Types::TypeTemplate.new(variance)
   end
+
+  def initializable!(variance=:invariant, &blk); end
 end

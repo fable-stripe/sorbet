@@ -1939,7 +1939,8 @@ public:
         if (singleton.exists()) {
             res.returnType = singleton.data(gs)->externalType();
         } else {
-            res.returnType = Types::classClass();
+            // TODO(jez) Can we make this return T::Class[args.thisType] or something?
+            res.returnType = Symbols::Class().data(gs)->externalType();
         }
     }
 } Object_class;
@@ -1954,15 +1955,23 @@ public:
         auto mustExist = true;
         ClassOrModuleRef self = unwrapSymbol(gs, args.thisType, mustExist);
 
+        // TODO(jez) I think we can further simplify this logic
+        // (and maybe even simplify the hacky handling for `initialize` in dispatchCallSymbol?)
+        if (self == Symbols::Class()) {
+            // Call to `.new` on `Class` object itself. We don't know what the object is, so we
+            // can't dispatch to it's `initialize` function. Just let the sig for `Class#new` return
+            // `T.attached_class`
+            //
+            // TODO(jez) Galaxy brain: dispatch to initialize on first type argument
+            return;
+        }
+
+        // TODO(jez) Are there any other intrinsics we think we can clean up?
+
         auto attachedClass = self.data(gs)->attachedClass(gs);
         if (!attachedClass.exists()) {
-            if (self == Symbols::Class()) {
-                // `Class.new(...)`, but it isn't a specific Class. We know
-                // calling .new on a Class will yield some sort of Object
-                attachedClass = Symbols::Object();
-            } else {
-                return;
-            }
+            ENFORCE(false); // TODO(jez) explain why we think this holds?
+            return;
         }
         auto instanceTy = attachedClass.data(gs)->externalType();
         // The Ruby VM treats `initialize` as private by default, but allows calling it directly within `new`.
@@ -2776,22 +2785,32 @@ public:
         auto selfTy = *args.args[0];
         auto mustExist = true;
         auto self = unwrapSymbol(gs, selfTy.type, mustExist);
+        auto selfData = self.data(gs);
 
-        if (self.data(gs)->isSingletonClass(gs)) {
-            auto attachedClass = self.data(gs)->findMember(gs, core::Names::Constants::AttachedClass());
-            ENFORCE(attachedClass.exists());
+        auto attachedClass = selfData->findMember(gs, core::Names::Constants::AttachedClass());
+        if (attachedClass.exists()) {
             res.returnType = make_type<MetaType>(make_type<SelfTypeParam>(attachedClass));
         } else if (self != core::Symbols::T_Private_Methods_DeclBuilder() && !args.suppressErrors) {
             if (auto e = gs.beginError(args.callLoc(), core::errors::Infer::AttachedClassOnInstance)) {
-                e.setHeader("`{}` may only be used in a singleton class method context", "T.attached_class");
-                e.addErrorSection(selfTy.explainGot(gs, args.originForUninitialized));
-                auto singletonClass = self.data(gs)->lookupSingletonClass(gs);
-                if (singletonClass.exists()) {
-                    e.addErrorNote(
-                        "`{}` represents instances of a class; `{}` represents the corresponding singleton class",
-                        self.show(gs), singletonClass.show(gs));
+                auto initializable = core::Names::declareInitializable().show(gs);
+                // TODO(jez) Report correct error here (w.r.t. instance methods of `Class` itself)
+                if (selfData->isModule()) {
+                    e.setHeader("`{}` must be marked `{}` before module instance methods can use `{}`", self.show(gs),
+                                initializable, "T.attached_class");
+                    // TODO(jez) Autocorrect to insert `initializable!`
+                } else if (selfData->isSingletonClass(gs)) {
+                    // Combination of `isSingletonClass` and `<AttachedClass>` missing means
+                    // this is the singleton class of a module.
+                    ENFORCE(selfData->attachedClass(gs).data(gs)->isModule());
+                    e.setHeader("`{}` cannot be used in singleton methods on modules, because modules cannot be "
+                                "instantiated",
+                                "T.attached_class");
                 } else {
-                    e.addErrorNote("`{}` represents instances of a class", self.show(gs));
+                    e.setHeader(
+                        "`{}` may only be used in singleton methods on classes or instance methods on `{}` modules",
+                        "T.attached_class", initializable);
+                    e.addErrorNote("Current context is `{}`, which is an instance class not a singleton class",
+                                   self.show(gs));
                 }
             }
             res.returnType = core::Types::untypedUntracked();
@@ -4232,6 +4251,7 @@ const vector<Intrinsic> intrinsics{
     {Symbols::T_Enumerator_Chain(), Intrinsic::Kind::Singleton, Names::squareBrackets(), &T_Generic_squareBrackets},
     {Symbols::T_Range(), Intrinsic::Kind::Singleton, Names::squareBrackets(), &T_Generic_squareBrackets},
     {Symbols::T_Set(), Intrinsic::Kind::Singleton, Names::squareBrackets(), &T_Generic_squareBrackets},
+    {Symbols::T_Class(), Intrinsic::Kind::Singleton, Names::squareBrackets(), &T_Generic_squareBrackets},
 
     {Symbols::Object(), Intrinsic::Kind::Instance, Names::class_(), &Object_class},
     {Symbols::Object(), Intrinsic::Kind::Instance, Names::singletonClass(), &Object_class},

@@ -22,7 +22,7 @@ namespace sorbet::core {
 
 using namespace std;
 
-const int Symbols::MAX_SYNTHETIC_CLASS_SYMBOLS = 210;
+const int Symbols::MAX_SYNTHETIC_CLASS_SYMBOLS = 212;
 const int Symbols::MAX_SYNTHETIC_METHOD_SYMBOLS = 50;
 const int Symbols::MAX_SYNTHETIC_FIELD_SYMBOLS = 4;
 const int Symbols::MAX_SYNTHETIC_TYPEARGUMENT_SYMBOLS = 4;
@@ -139,6 +139,7 @@ TypePtr ClassOrModule::unsafeComputeExternalType(GlobalState &gs) {
 
         // Special-case covariant stdlib generics to have their types
         // defaulted to `T.untyped`. This set *should not* grow over time.
+        // TODO(jez) Should this use isLegacyStdlibGeneric ?
         bool isStdlibGeneric = ref == core::Symbols::Hash() || ref == core::Symbols::Array() ||
                                ref == core::Symbols::Set() || ref == core::Symbols::Range() ||
                                ref == core::Symbols::Enumerable() || ref == core::Symbols::Enumerator() ||
@@ -445,9 +446,11 @@ string TypeArgumentRef::show(const GlobalState &gs, ShowOptions options) const {
 string TypeMemberRef::show(const GlobalState &gs, ShowOptions options) const {
     auto sym = data(gs);
     if (sym->name == core::Names::Constants::AttachedClass()) {
-        auto attached = sym->owner.asClassOrModuleRef().data(gs)->attachedClass(gs);
-        ENFORCE(attached.exists());
-        if (options.showForRBI) {
+        auto owner = sym->owner.asClassOrModuleRef();
+        auto attached = owner.data(gs)->attachedClass(gs);
+        ENFORCE(attached.exists() || owner == core::Symbols::Class() || owner.data(gs)->isModule());
+        // TODO(jez) If you end up allowing `initializable!` for arbitrary classes, change this `owner ==` check here.
+        if (options.showForRBI || owner == core::Symbols::Class() || owner.data(gs)->isModule()) {
             return "T.attached_class";
         }
         return fmt::format("T.attached_class (of {})", attached.show(gs, options));
@@ -636,8 +639,9 @@ bool ClassOrModuleRef::isPackageSpecSymbol(const GlobalState &gs) const {
 
 bool ClassOrModuleRef::isBuiltinGenericForwarder() const {
     return *this == Symbols::T_Hash() || *this == Symbols::T_Array() || *this == Symbols::T_Set() ||
-           *this == Symbols::T_Range() || *this == Symbols::T_Enumerable() || *this == Symbols::T_Enumerator() ||
-           *this == Symbols::T_Enumerator_Lazy() || *this == Symbols::T_Enumerator_Chain();
+           *this == Symbols::T_Range() || *this == Symbols::T_Class() || *this == Symbols::T_Enumerable() ||
+           *this == Symbols::T_Enumerator() || *this == Symbols::T_Enumerator_Lazy() ||
+           *this == Symbols::T_Enumerator_Chain();
 }
 
 ClassOrModuleRef ClassOrModuleRef::maybeUnwrapBuiltinGenericForwarder() const {
@@ -657,6 +661,8 @@ ClassOrModuleRef ClassOrModuleRef::maybeUnwrapBuiltinGenericForwarder() const {
         return Symbols::Range();
     } else if (*this == Symbols::T_Set()) {
         return Symbols::Set();
+    } else if (*this == Symbols::T_Class()) {
+        return Symbols::Class();
     } else {
         return *this;
     }
@@ -679,6 +685,8 @@ ClassOrModuleRef ClassOrModuleRef::forwarderForBuiltinGeneric() const {
         return Symbols::T_Range();
     } else if (*this == Symbols::Set()) {
         return Symbols::T_Set();
+    } else if (*this == Symbols::Class()) {
+        return Symbols::T_Class();
     } else {
         return Symbols::noClassOrModule();
     }
@@ -687,6 +695,7 @@ ClassOrModuleRef ClassOrModuleRef::forwarderForBuiltinGeneric() const {
 // See the comment in the header.
 // !! The set of stdlib classes receiving this special behavior should NOT grow over time !!
 bool ClassOrModuleRef::isLegacyStdlibGeneric() const {
+    // TODO(jez) Consider not special casing `Class`
     return *this == Symbols::Hash() || *this == Symbols::Array() || *this == Symbols::Set() ||
            *this == Symbols::Range() || *this == Symbols::Enumerable() || *this == Symbols::Enumerator() ||
            *this == Symbols::Enumerator_Lazy() || *this == Symbols::Enumerator_Chain();
