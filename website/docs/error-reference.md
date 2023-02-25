@@ -2832,6 +2832,14 @@ class MyClass < AbstractSerializable
 end
 ```
 
+## 5073
+
+A module marked `initializable!` can only be mixed into a class with `extend`,
+or a module with `include`. When mixing an `initializable!` module into another
+module, both modules must be marked `initializable!`.
+
+For more information, see the docs for [`T.attached_class`](attached-class.md).
+
 ## 6001
 
 Certain Ruby keywords like `break`, `next`, and `retry` can only be used inside
