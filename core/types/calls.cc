@@ -1992,7 +1992,7 @@ public:
             dispatched.main.errors.emplace_back(std::move(err));
         }
         res.main.errors.clear();
-        res.returnType = instanceTy;
+        // res.returnType = instanceTy;
         res.main = move(dispatched.main);
         if (!res.main.method.exists()) {
             // If we actually dispatched to some `initialize` method, use that method as the result,

@@ -502,9 +502,14 @@ string AppliedType::show(const GlobalState &gs, ShowOptions options) const {
         auto tm = typeMember;
         if (tm.data(gs)->flags.isFixed) {
             it = targs.erase(it);
-        } else if (this->klass.data(gs)->isSingletonClass(gs) &&
-                   typeMember.data(gs)->name == core::Names::Constants::AttachedClass()) {
-            it = targs.erase(it);
+            // } else if (this->klass.data(gs)->isSingletonClass(gs) &&
+            //            typeMember.data(gs)->name == core::Names::Constants::AttachedClass() &&
+            //            Types::isSubType(gs, cast_type<LambdaParam>(typeMember.data(gs)->resultType)->upperBound,
+            //            *it)) {
+            //     // TODO(jez) Will have to decide whether there are some situations where we want to hide
+            //     // the AttachedClass anymore, if we allow it to be passed a specific value
+            //     // `T.class_of(A)` or `T.class_of(A)[A]` or `T.class_of(A)[ChildA]` to users
+            //     it = targs.erase(it);
         } else if (this->klass == Symbols::Hash() && typeMember == typeMembers.back()) {
             it = targs.erase(it);
         } else {
