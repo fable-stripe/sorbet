@@ -2,7 +2,7 @@
 # typed: true
 
 module T::Private::Methods
-  Declaration = Struct.new(:mod, :params, :returns, :bind, :mode, :checked, :finalized, :on_failure, :override_allow_incompatible, :type_parameters, :raw)
+  Declaration = Struct.new(:mod, :params, :returns, :bind, :mode, :checked, :finalized, :on_failure, :override_allow_incompatible, :raw)
 
   class DeclBuilder
     attr_reader :decl
@@ -26,9 +26,12 @@ module T::Private::Methods
         false, # finalized
         ARG_NOT_PROVIDED, # on_failure
         nil, # override_allow_incompatible
-        ARG_NOT_PROVIDED, # type_parameters
         raw
       )
+      # We store `type_parameters` on the builder to hide its handling; as Sorbet
+      # erases generics, there's no reason that anybody should need to access the
+      # type parameters of the decl itself.
+      @type_parameters = ARG_NOT_PROVIDED
     end
 
     def params(*unused_positional_params, **params)
@@ -201,11 +204,12 @@ module T::Private::Methods
         raise BuilderError.new("not a symbol: #{name}") unless name.is_a?(Symbol)
       end
 
-      if !decl.type_parameters.equal?(ARG_NOT_PROVIDED)
+      if !@type_parameters.equal?(ARG_NOT_PROVIDED)
         raise BuilderError.new("You can't call .type_parameters multiple times in a signature.")
       end
 
-      decl.type_parameters = names
+      # Just record something different from ARG_NOT_PROVIDED.
+      @type_parameters = true
 
       self
     end
@@ -232,9 +236,6 @@ module T::Private::Methods
       end
       if decl.params.equal?(ARG_NOT_PROVIDED)
         decl.params = {}
-      end
-      if decl.type_parameters.equal?(ARG_NOT_PROVIDED)
-        decl.type_parameters = {}
       end
 
       decl.finalized = true
