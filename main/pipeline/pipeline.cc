@@ -437,11 +437,6 @@ struct IndexResult {
     vector<ast::ParsedFile> trees;
 };
 
-struct IndexThreadResultPack {
-    CounterState counters;
-    IndexResult res;
-};
-
 struct IndexSubstitutionJob {
     // Not necessary for substitution, but passing this through to the worker means it's freed in that thread, instead
     // of serially in the main thread.
@@ -465,8 +460,8 @@ struct IndexSubstitutionJob {
 };
 
 vector<ast::ParsedFile> mergeIndexResults(core::GlobalState &cgs, const options::Options &opts,
-                                          shared_ptr<BlockingBoundedQueue<IndexThreadResultPack>> input,
-                                          WorkerPool &workers, const unique_ptr<const OwnedKeyValueStore> &kvstore,
+                                          shared_ptr<BlockingBoundedQueue<IndexResult>> input, WorkerPool &workers,
+                                          const unique_ptr<const OwnedKeyValueStore> &kvstore,
                                           WorkerPool::MultiplexCleanup &&multiplexResult) {
     ProgressIndicator progress(opts.showProgress, "Indexing", input->bound);
     Timer timeit(cgs.tracer(), "mergeIndexResults");
@@ -477,13 +472,12 @@ vector<ast::ParsedFile> mergeIndexResults(core::GlobalState &cgs, const options:
 
     {
         Timer timeit(cgs.tracer(), "mergeGlobalStates");
-        IndexThreadResultPack threadResult;
+        IndexResult threadResult;
         for (auto result = input->wait_pop_timed(threadResult, WorkerPool::BLOCK_INTERVAL(), cgs.tracer());
              !result.done(); result = input->wait_pop_timed(threadResult, WorkerPool::BLOCK_INTERVAL(), cgs.tracer())) {
             if (result.gotItem()) {
-                counterConsume(move(threadResult.counters));
-                auto numTrees = threadResult.res.trees.size();
-                batchq->push(IndexSubstitutionJob{cgs, std::move(threadResult.res)}, numTrees);
+                auto numTrees = threadResult.trees.size();
+                batchq->push(IndexSubstitutionJob{cgs, std::move(threadResult)}, numTrees);
                 totalNumTrees += numTrees;
             }
         }
@@ -533,7 +527,7 @@ vector<ast::ParsedFile> indexSuppliedFiles(core::GlobalState &baseGs, vector<cor
                                            const options::Options &opts, WorkerPool &workers,
                                            const unique_ptr<const OwnedKeyValueStore> &kvstore) {
     Timer timeit(baseGs.tracer(), "indexSuppliedFiles");
-    auto resultq = make_shared<BlockingBoundedQueue<IndexThreadResultPack>>(files.size());
+    auto resultq = make_shared<BlockingBoundedQueue<IndexResult>>(files.size());
     auto fileq = make_shared<ConcurrentBoundedQueue<core::FileRef>>(files.size());
     for (auto &file : files) {
         fileq->push(move(file), 1);
@@ -548,7 +542,7 @@ vector<ast::ParsedFile> indexSuppliedFiles(core::GlobalState &baseGs, vector<cor
         // file sources are available.
         unique_ptr<core::GlobalState> localGs = emptyGs->deepCopy();
 
-        IndexThreadResultPack threadResult;
+        IndexResult threadResult;
 
         {
             core::FileRef job;
@@ -557,15 +551,14 @@ vector<ast::ParsedFile> indexSuppliedFiles(core::GlobalState &baseGs, vector<cor
                     core::FileRef file = job;
                     auto cachedTree = readFileWithStrictnessOverrides(*localGs, file, opts, kvstore);
                     auto parsedFile = indexOne(opts, *localGs, file, move(cachedTree));
-                    threadResult.res.trees.emplace_back(move(parsedFile));
+                    threadResult.trees.emplace_back(move(parsedFile));
                 }
             }
         }
 
-        if (!threadResult.res.trees.empty()) {
-            threadResult.counters = getAndClearThreadCounters();
-            threadResult.res.gs = move(localGs);
-            auto computedTreesCount = threadResult.res.trees.size();
+        if (!threadResult.trees.empty()) {
+            threadResult.gs = move(localGs);
+            auto computedTreesCount = threadResult.trees.size();
             resultq->push(move(threadResult), computedTreesCount);
         }
     });
